@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
-import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Svg, { G, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 
 const COLORS = {
@@ -14,15 +15,12 @@ const COLORS = {
   muted: "#667085"
 };
 
-const comparisonSeries = createDenoisingSeries();
-const normalSeries = createRhythmSeries([0.18, 1.95, 3.72, 5.49, 7.26, 9.03, 10.8, 12.57, 14.34]);
-const arrhythmiaSeries = createRhythmSeries([0.7, 2.65, 4.78, 6.74, 8.6, 10.02, 12.18, 13.86], true);
+const SIGNAL_QUALITIES = ["Good", "Stable", "Noisy"];
 
-const metrics = [
-  { label: "Heart rate", value: "74", unit: "bpm", tone: "#e8f3ff" },
-  { label: "Noise removed", value: "82", unit: "%", tone: "#eaf8ef" },
-  { label: "Signal quality", value: "Good", unit: "", tone: "#fff4df" }
-];
+function seededRandom(seed) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+}
 
 function gaussian(value, center, width, amplitude) {
   return amplitude * Math.exp(-Math.pow(value - center, 2) / (2 * width * width));
@@ -38,24 +36,36 @@ function heartbeat(t, center) {
   );
 }
 
-function createDenoisingSeries() {
+function createDenoisingSeries(seed) {
   const samples = 220;
   const duration = 5;
-  const beats = [0.58, 1.6, 2.62, 3.64, 4.63];
+  const heartRate = 62 + Math.round(seededRandom(seed + 1) * 34);
+  const interval = 60 / heartRate;
+  const firstBeat = 0.48 + seededRandom(seed + 2) * 0.18;
+  const beats = [];
   const clean = [];
   const noisy = [];
   const denoised = [];
+  const noiseLevel = 0.22 + seededRandom(seed + 3) * 0.18;
+  const denoiseRatio = 0.09 + seededRandom(seed + 4) * 0.09;
+
+  for (let beat = firstBeat; beat < duration + 0.4; beat += interval + (seededRandom(seed + beat * 11) - 0.5) * 0.08) {
+    beats.push(beat);
+  }
 
   for (let index = 0; index < samples; index += 1) {
     const x = (duration * index) / (samples - 1);
     const base = beats.reduce((sum, beat) => sum + heartbeat(x, beat), 0);
-    const baseline = 0.04 * Math.sin(x * 2.8) - 0.03;
-    const noise = 0.18 * Math.sin(x * 57.2) + 0.13 * Math.sin(x * 143.7) + 0.09 * Math.sin(x * 231.1);
+    const baseline = 0.04 * Math.sin(x * (2.2 + seededRandom(seed + 5))) - 0.03;
+    const noise =
+      noiseLevel * Math.sin(x * (48 + seededRandom(seed + 6) * 18)) +
+      noiseLevel * 0.62 * Math.sin(x * (130 + seededRandom(seed + 7) * 34)) +
+      noiseLevel * 0.38 * Math.sin(x * (218 + seededRandom(seed + 8) * 36));
     const cleanY = base + baseline;
 
     clean.push({ x, y: cleanY });
     noisy.push({ x, y: cleanY + noise });
-    denoised.push({ x, y: cleanY + noise * 0.12 + 0.018 * Math.sin(x * 18) });
+    denoised.push({ x, y: cleanY + noise * denoiseRatio + 0.018 * Math.sin(x * (13 + seededRandom(seed + 9) * 10)) });
   }
 
   return [
@@ -65,22 +75,55 @@ function createDenoisingSeries() {
   ];
 }
 
-function createRhythmSeries(beats, irregular = false) {
+function createRhythmSeries(beats, seed, irregular = false) {
   const duration = 15;
   const samples = 280;
 
   return Array.from({ length: samples }, (_, index) => {
     const x = (duration * index) / (samples - 1);
     const base = beats.reduce((sum, beat, beatIndex) => {
-      const scale = irregular ? 0.8 + ((beatIndex % 3) * 0.12) : 1;
+      const scale = irregular ? 0.74 + seededRandom(seed + beatIndex + 20) * 0.36 : 0.96 + seededRandom(seed + beatIndex + 40) * 0.08;
       return sum + heartbeat(x, beat) * scale;
     }, 0);
     const variation = irregular
-      ? 0.1 * Math.sin(x * 6.1) + 0.06 * Math.sin(x * 17.4) - 0.12
-      : 0.02 * Math.sin(x * 4.2) - 0.06;
+      ? 0.1 * Math.sin(x * (5.6 + seededRandom(seed + 41))) + 0.06 * Math.sin(x * (15.4 + seededRandom(seed + 42) * 4)) - 0.12
+      : 0.02 * Math.sin(x * (3.8 + seededRandom(seed + 43))) - 0.06;
 
     return { x, y: base + variation };
   });
+}
+
+function createBeatSchedule(seed, duration, baseInterval, irregular = false) {
+  const beats = [];
+  let time = 0.25 + seededRandom(seed + 60) * 0.5;
+
+  while (time < duration) {
+    const jitter = irregular ? (seededRandom(seed + time * 17) - 0.5) * 0.7 : (seededRandom(seed + time * 13) - 0.5) * 0.06;
+    time += Math.max(0.72, baseInterval + jitter);
+    beats.push(time);
+  }
+
+  return beats;
+}
+
+function createMockSnapshot(seed) {
+  const heartRate = 62 + Math.round(seededRandom(seed + 100) * 36);
+  const noiseRemoved = 70 + Math.round(seededRandom(seed + 101) * 23);
+  const quality = SIGNAL_QUALITIES[Math.floor(seededRandom(seed + 102) * SIGNAL_QUALITIES.length)];
+  const normalBeats = createBeatSchedule(seed + 120, 15, 1.75);
+  const arrhythmiaBeats = createBeatSchedule(seed + 140, 15, 1.55, true);
+
+  return {
+    comparisonSeries: createDenoisingSeries(seed),
+    normalSeries: createRhythmSeries(normalBeats, seed + 200),
+    arrhythmiaSeries: createRhythmSeries(arrhythmiaBeats, seed + 300, true),
+    metrics: [
+      { label: "Heart rate", value: String(heartRate), unit: "bpm", tone: "#e8f3ff" },
+      { label: "Noise removed", value: String(noiseRemoved), unit: "%", tone: "#eaf8ef" },
+      { label: "Signal quality", value: quality, unit: "", tone: "#fff4df" }
+    ],
+    updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+  };
 }
 
 function toPath(points, bounds, innerWidth, innerHeight) {
@@ -165,6 +208,28 @@ function EcgChart({ title, subtitle, series, duration, yMin, yMax, height = 250,
 }
 
 export default function HomeScreen() {
+  const [seed, setSeed] = useState(1);
+  const [isLive, setIsLive] = useState(true);
+  const [snapshot, setSnapshot] = useState(() => createMockSnapshot(1));
+
+  useEffect(() => {
+    setSnapshot(createMockSnapshot(seed));
+  }, [seed]);
+
+  useEffect(() => {
+    if (!isLive) {
+      return undefined;
+    }
+
+    const intervalId = globalThis.setInterval(() => {
+      setSeed((currentSeed) => currentSeed + 1);
+    }, 1200);
+
+    return () => globalThis.clearInterval(intervalId);
+  }, [isLive]);
+
+  const generateSample = () => setSeed((currentSeed) => currentSeed + 1);
+
   return (
     <View style={styles.screen}>
       <StatusBar style="dark" />
@@ -173,12 +238,25 @@ export default function HomeScreen() {
           <Text style={styles.eyebrow}>Mock EKG data</Text>
           <Text style={styles.title}>Denoised ECG Monitor</Text>
           <Text style={styles.description}>
-            Basic mobile prototype showing clean, noisy, and denoised ECG signals from generated sample data.
+            Live-feeling prototype that generates fake clean, noisy, and denoised ECG signals at runtime.
           </Text>
+          <View style={styles.statusRow}>
+            <View style={[styles.liveDot, isLive ? styles.liveDotActive : styles.liveDotPaused]} />
+            <Text style={styles.statusText}>{isLive ? "Live simulation" : "Paused"} · Updated {snapshot.updatedAt}</Text>
+          </View>
+        </View>
+
+        <View style={styles.controlsRow}>
+          <Pressable style={[styles.controlButton, isLive ? styles.controlButtonActive : null]} onPress={() => setIsLive((currentValue) => !currentValue)}>
+            <Text style={[styles.controlButtonText, isLive ? styles.controlButtonTextActive : null]}>{isLive ? "Pause live" : "Start live"}</Text>
+          </Pressable>
+          <Pressable style={styles.controlButton} onPress={generateSample}>
+            <Text style={styles.controlButtonText}>Generate sample</Text>
+          </Pressable>
         </View>
 
         <View style={styles.metricsRow}>
-          {metrics.map((metric) => (
+          {snapshot.metrics.map((metric) => (
             <View key={metric.label} style={[styles.metricCard, { backgroundColor: metric.tone }]}>
               <Text style={styles.metricLabel}>{metric.label}</Text>
               <View style={styles.metricValueRow}>
@@ -192,7 +270,7 @@ export default function HomeScreen() {
         <EcgChart
           title="ECG Denoising (5 sec)"
           subtitle="Clean vs noisy vs denoised waveform"
-          series={comparisonSeries}
+          series={snapshot.comparisonSeries}
           duration={5}
           yMin={-0.7}
           yMax={1.35}
@@ -204,7 +282,7 @@ export default function HomeScreen() {
         <EcgChart
           title="Normal ECG"
           subtitle="Regular beat intervals"
-          series={[{ label: "Normal", color: COLORS.normal, data: normalSeries, width: 2.2 }]}
+          series={[{ label: "Normal", color: COLORS.normal, data: snapshot.normalSeries, width: 2.2 }]}
           duration={15}
           yMin={-1}
           yMax={1}
@@ -213,7 +291,7 @@ export default function HomeScreen() {
         <EcgChart
           title="ECG with Arrhythmia"
           subtitle="Irregular beat spacing and amplitude variation"
-          series={[{ label: "Arrhythmia", color: COLORS.arrhythmia, data: arrhythmiaSeries, width: 2.2 }]}
+          series={[{ label: "Arrhythmia", color: COLORS.arrhythmia, data: snapshot.arrhythmiaSeries, width: 2.2 }]}
           duration={15}
           yMin={-1}
           yMax={1}
@@ -263,6 +341,55 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 10,
     maxWidth: 560
+  },
+  statusRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 18
+  },
+  liveDot: {
+    borderRadius: 6,
+    height: 10,
+    width: 10
+  },
+  liveDotActive: {
+    backgroundColor: "#36d399"
+  },
+  liveDotPaused: {
+    backgroundColor: "#f59e0b"
+  },
+  statusText: {
+    color: "#e8eef8",
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  controlsRow: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14
+  },
+  controlButton: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "rgba(16, 24, 40, 0.12)",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 13
+  },
+  controlButtonActive: {
+    backgroundColor: "#2f7dbd",
+    borderColor: "#2f7dbd"
+  },
+  controlButtonText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  controlButtonTextActive: {
+    color: "#ffffff"
   },
   metricsRow: {
     alignSelf: "stretch",

@@ -2,6 +2,9 @@ import js from "@eslint/js";
 import react from "eslint-plugin-react";
 
 export default [
+  {
+    ignores: [".expo/**", "dist/**", "dist-web/**", "node_modules/**"]
+  },
   js.configs.recommended,
   {
     files: ["**/*.{js,jsx}"],
